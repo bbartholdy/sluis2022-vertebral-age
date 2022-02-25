@@ -1,0 +1,561 @@
+---
+title: "Supplementary Material for Sluis et al. 2022"
+output:
+  bookdown::html_document2:
+    toc: true
+  bookdown::pdf_document2: default
+  bookdown::word_document2: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = F)
+library(here)
+library(tidyverse)
+library(broom)
+library(ggfortify)
+source(here("scripts/data-cleaning.R"))
+source(here("scripts/data-wrang.R"))
+source(here("scripts/wls-models.R"))
+```
+
+R Session info:
+
+```{r r-session}
+session <- sessionInfo()
+print(session, locale = FALSE)
+```
+
+Age group definitions:
+
+| Age category | Age range |
+|:---:|:---:|
+| 1 | 0 -- 19  |           
+| 2 | 20 -- 29 |
+| 3 | 30 -- 39 |
+| 4 | 40 -- 49 |
+| 5 | 50 -- 59 |
+| 6 | 60 -- 69 |
+| 7 | 70 -- 79 |
+| 8 | 80 -- 89 |
+
+# Summary statistics
+
+## Age-at-death within the sample
+
+```{r age-descriptives}
+# Age
+  # descriptive statistics for whole sample
+age_summ_tot <- region_means_all %>%
+  filter(region == "all", 
+         method == "snodgrass") %>%
+  count(id, known_age) %>%
+  summarise(n = n(),
+            mean = mean(known_age, na.rm = T),
+            sd = sd(known_age, na.rm = T),
+            range = paste(range(known_age, na.rm = T), collapse = "--")) %>%
+  mutate(sex = "Both", .before = mean)
+  # descriptive statistics by age category and sex
+age_group_summ <- region_means_all %>%
+  group_by(age_group, sex) %>%
+  count(id, known_age) %>%
+  summarise(n = n(),
+            mean = mean(known_age, na.rm = T), # mean age within each age cat
+            sd = sd(known_age, na.rm = T))
+
+age_sex_summ <- region_means_all %>%
+  group_by(sex) %>%
+  count(id, known_age) %>%
+  summarise(n = n(),
+            mean = mean(known_age, na.rm = T),
+            sd = sd(known_age, na.rm = T),
+            range = paste(range(known_age, na.rm = T), collapse = "--")) %>%
+  add_row(age_summ_tot)
+
+females <- age_sex_summ %>%
+  filter(sex == "F")
+males <- age_sex_summ %>%
+  filter(sex == "M")
+```
+
+The age distribution between males and females is very similar in mean and shape.
+The mean age of males is `r signif(males$mean, 3)` $\pm$ `r signif(males$sd, 3)`, 
+with a range of `r males$range`. The mean age of females is `r signif(females$mean, 3)`
+$\pm$ `r signif(females$sd, 3)`, with a range of `r females$range`.
+
+```{r age-stats-tbl, echo=FALSE}
+knitr::kable(age_sex_summ, caption = "Summary statistics for age-at-death.")
+```
+
+```{r expand-age-stats-tbl, echo=FALSE}
+knitr::kable(age_group_summ, caption = "Summary statistics for grouped ages-at-death.")
+```
+
+```{r age-dist-plot, fig.cap="Age distribution for each sex. F = Female, M = Male."}
+raw_data %>%
+  filter(vertebral_position == "Superior") %>%
+  ggplot(aes(x = known_age, fill = sex)) +
+    geom_density(alpha = 0.5) +
+    scale_fill_viridis_d() +
+  theme_bw()
+```
+
+## Osteophyte scores
+
+A comparison of osteophyte scores between methods.
+
+```{r sex-osteophyte-pl, warning=FALSE, fig.cap="Comparing osteophyte scores between sex, separated by region and method."}
+region_means_all %>%
+  ggplot(aes(x = sex, y = region_mean, fill = sex)) +
+    geom_violin(alpha = 0.8) +
+    geom_boxplot(width = 0.2, fill = "white") +
+    facet_wrap(~ method + region) +
+    coord_flip() +
+    scale_fill_viridis_d() +
+    theme_bw() +
+    theme(legend.position = "none")
+```
+
+
+# Correlation tests
+
+```{r cor-sex}
+cor_test <- region_means_all %>%
+  filter(region == "all", sex == "F", method == "snodgrass") %>%
+  dplyr::select(region_mean, known_age)
+cor_f <- cor.test(cor_test$region_mean, cor_test$known_age) %>%
+  tidy()
+
+cor_test <- region_means_all %>%
+  filter(region == "all", sex == "M", method == "snodgrass") %>%
+  dplyr::select(region_mean, known_age)
+cor_m <- cor.test(cor_test$region_mean, cor_test$known_age) %>%
+  tidy()
+
+cor_f %>%
+  bind_rows(cor_m) %>%
+  mutate(sex = c("F", "M"), .before = 1) %>%
+  knitr::kable(caption = "Pearson correlation coefficients for Snodgrass osteophyte score for combined regions, and age-at-death. Separated by Sex.")
+```
+
+Males (`r cor_m$estimate`) have a higher correlation between osteophyte score 
+and age than females (`r cor_f$estimate`). Both have strong correlations.
+
+# Weighted least squares regression
+
+Models were built using weights estimated with a standard deviation function 
+regressing the absolute values of the residuals on the predictor, i.e. known age.
+The weights were then calculated as the inverse of the squared standard deviation
+function.
+
+$$ w_i = \frac{1}{\sigma^2_i} $$
+
+```{r wls-pl, warning=FALSE, message=FALSE, fig.cap="Regression plots for all regions and methods. F = Female, M = Male."}
+# Code to generate wls regression lines for facet plot
+reg_plots <- region_means_all %>%
+  #group_by(feat, known_age, sex, region, method) %>%
+  #summarise(region_mean = mean(score, na.rm = T)) %>%
+  ggplot(aes(x = region_mean, known_age)) +
+    geom_point(aes(col = sex)) +
+    scale_color_viridis_d(name = "Sex") +
+    facet_wrap(~ method + region) +
+    theme_bw() +
+    labs(x = "Mean Osteophyte Score", y = "Age-at-Death")
+
+# Insert coefficients into table
+snodgrass_coefs <- lapply(snodgrass_wls, coef) %>%
+  unlist() %>%
+  matrix(byrow = T, nrow = 4, ncol = 2) 
+watanabe_coefs <- lapply(watanabe_wls, coef) %>%
+  unlist() %>%
+  matrix(byrow = T, nrow = 4, ncol = 2)
+praneatpolgrang_coefs <- lapply(praneatpolgrang_wls, coef) %>%
+  unlist() %>%
+  matrix(byrow = T, nrow = 4, ncol = 2)
+all_coefs <- rbind(praneatpolgrang_coefs, snodgrass_coefs, watanabe_coefs)
+# Create data frame to pass to geom_abline
+reg_coefs <- data.frame("method" = c(rep("praneatpolgrang", 4),
+                                     rep("snodgrass", 4), 
+                                     rep("watanabe", 4)),
+                        "region" = rep(c("all", "cervical", "lumbar", "thoracic")), 
+                        "slope" = all_coefs[,1], 
+                        "intercept" = all_coefs[,2])
+reg_plots +
+    geom_abline(aes(slope = slope, intercept = intercept), reg_coefs)
+ggsave(here("fig_output", "wls_plots.jpg"),
+      dpi = 600, height = 6, width = 7.5, units = "in")
+```
+
+## Snodgrass
+
+```{r results='asis'}
+lapply(snodgrass_wls, extract_eq, use_coefs = T)
+```
+
+## Watanabe et al.
+
+```{r results='asis'}
+lapply(watanabe_wls, extract_eq, use_coefs = T)
+```
+
+## Praneatpolgrang et al.
+
+```{r results='asis'}
+lapply(praneatpolgrang_wls, extract_eq, use_coefs = T)
+```
+
+
+## Model evaluation
+
+Models from each of the three methods (Snodgrass, Watanabe et al., and Praneatpolgrang et al.) 
+and four regions (combined, cervical, thoracic, and lumbar) were evaluated using
+R$^2$, standard error of the estimate (SEE), AIC, and accuracy.
+Accuracy is calculated as the total number of prediction intervals that contain 
+the known age, and total number of estimates that are within 5, 10, and 15 years
+of the known age.
+
+```{r}
+all_eval_tbl %>%
+  relocate(method, .before = 1) %>%
+  knitr::kable(caption = "Evaluation of combined regions models.")
+```
+
+```{r}
+knitr::kable(cerv_eval_tbl, caption = "Evaluation of cervical region models.")
+```
+
+```{r}
+knitr::kable(thor_eval_tbl, caption = "Evaluation of thoracic region models.")
+```
+
+```{r}
+knitr::kable(lumb_eval_tbl, caption = "Evaluation of lumbar region models.")
+```
+
+### Diagnostic plots for the combined regions
+
+**Snodgrass**
+
+```{r diag-pl-snodgrass}
+autoplot(snodgrass_wls$all)
+```
+
+**Watanabe**
+
+```{r diag-pl-watanabe}
+autoplot(watanabe_wls$all)
+```
+
+**Praneatpolgrang**
+
+```{r diag-pl-praneatpolgrang}
+autoplot(praneatpolgrang_wls$all)
+```
+
+# Biases
+
+Does the number of elements present influence accuracy?
+
+Graphs show the number of elements and the absolute value of the residuals for
+the Snodgrass method, to see if there is any relationship between the number of 
+elements scored and the accuracy of the age estimate.
+
+```{r elements-res-all, eval=TRUE, message=FALSE, warning=FALSE, fig.cap="Number of elements (n) plotted against the absolute value of the residuals for Snodgrass method, combined regions."}
+n_elements <- element_data_long %>% 
+  group_by(id,method,region) %>%
+  summarise(n = sum(!is.na(score))) %>%
+  ungroup()
+
+n_elements_all <- n_elements %>%
+  group_by(id, method) %>%
+  summarise(n = sum(n)) %>%
+  mutate(region = "all") %>%
+  ungroup()
+
+n_all_snodgrass <- n_elements_all %>%
+  filter(method == "snodgrass") %>%
+  mutate(residual = snodgrass_all_res$residual,
+         age = snodgrass_all_res$known_age,
+         sex = snodgrass_all_res$sex)
+
+n_all_snodgrass %>%
+  ggplot(aes(x = n, y = abs(residual))) +
+    geom_point(aes(col = sex)) +
+    geom_smooth(method = "lm", se = F, col = "black", size = 0.5) +
+    scale_color_viridis_d() +
+    theme_minimal()
+```
+
+The graph shows that there is no apparent relationship between the number of elements
+scored and the accuracy of the age, meaning there is no theoretical minimum
+number of elements that needs to be scored; however, I would recommend that at least
+3 elements are scored (preferably more) to obtain reliable results.
+
+```{r elements-res-cerv, eval=TRUE, message=FALSE, warning=FALSE, fig.cap="Number of elements (n) plotted against the absolute value of the residuals for Snodgrass method, cervical region."}
+n_elements <- element_data_long %>% 
+  group_by(id,method,region) %>%
+  summarise(n = sum(!is.na(score))) %>%
+  ungroup()
+
+n_elements_cerv <- n_elements %>%
+  filter(region == "cervical") %>%
+  group_by(id, method) %>%
+  summarise(n = sum(n)) %>%
+  #mutate(region = "cervical") %>%
+  ungroup()
+
+n_cerv_snodgrass <- n_elements_cerv %>%
+  filter(method == "snodgrass", n != 0) %>%
+  mutate(residual = snodgrass_cerv_res$residual,
+         age = snodgrass_cerv_res$known_age,
+         sex = snodgrass_cerv_res$sex)
+
+n_cerv_snodgrass %>%
+  ggplot(aes(x = n, y = abs(residual))) +
+    geom_point(aes(col = sex)) +
+    geom_smooth(method = "lm", se = F, col = "black", size = 0.5) +
+    scale_color_viridis_d() +
+    theme_minimal()
+```
+
+```{r elements-res-thor, eval=TRUE, message=FALSE, warning=FALSE, , fig.cap="Number of elements (n) plotted against the absolute value of the residuals for Snodgrass method, thoracic region."}
+n_elements <- element_data_long %>% 
+  group_by(id,method,region) %>%
+  summarise(n = sum(!is.na(score))) %>%
+  ungroup()
+
+n_elements_thor <- n_elements %>%
+  filter(region == "thoracic") %>%
+  group_by(id, method) %>%
+  summarise(n = sum(n)) %>%
+  #mutate(region = "thoracic") %>%
+  ungroup()
+
+n_thor_snodgrass <- n_elements_thor %>%
+  filter(method == "snodgrass", n != 0) %>%
+  mutate(residual = snodgrass_thor_res$residual,
+         age = snodgrass_thor_res$known_age,
+         sex = snodgrass_thor_res$sex)
+
+n_thor_snodgrass %>%
+  ggplot(aes(x = n, y = abs(residual))) +
+    geom_point(aes(col = sex)) +
+    geom_smooth(method = "lm", se = F, col = "black", size = 0.5) +
+    scale_color_viridis_d() +
+    theme_minimal()
+```
+
+```{r elements-res-lumb, eval=TRUE, message=FALSE, warning=FALSE, fig.cap="Number of elements (n) plotted against the absolute value of the residuals for Snodgrass method, lumbar region."}
+n_elements <- element_data_long %>% 
+  group_by(id,method,region) %>%
+  summarise(n = sum(!is.na(score))) %>%
+  ungroup()
+
+n_elements_lumb <- n_elements %>%
+  filter(region == "lumbar") %>%
+  group_by(id, method) %>%
+  summarise(n = sum(n)) %>%
+  #mutate(region = "lumbar") %>%
+  ungroup()
+
+n_lumb_snodgrass <- n_elements_lumb %>%
+  filter(method == "snodgrass", n != 0) %>%
+  mutate(residual = snodgrass_lumb_res$residual,
+         age = snodgrass_lumb_res$known_age,
+         sex = snodgrass_lumb_res$sex)
+
+n_lumb_snodgrass %>%
+  ggplot(aes(x = n, y = abs(residual))) +
+    geom_point(aes(col = sex)) +
+    geom_smooth(method = "lm", se = F, col = "black", size = 0.5) +
+    scale_color_viridis_d() +
+    theme_minimal()
+```
+
+## Age bias
+
+```{r snodgrass-all-res, fig.cap="Residuals for Snodgrass method, combined regions, plotted against known age-at-death."}
+data.frame(
+  "known_age" = sep_regions$snodgrass$all$known_age,
+  "residuals" = snodgrass_wls$all$residuals,
+  "sex" = sep_regions$snodgrass$all$sex) %>%
+ggplot(aes(x = known_age, y = residuals, col = sex)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  theme_bw() +
+  labs(y = "Residuals", x = "Age-at-Death") +
+  scale_colour_viridis_d(name = "Sex")
+```
+
+```{r include=FALSE}
+ggsave(here("fig_output", "snod_age-bias.jpg"), 
+      dpi = 600, width = 7, height = 6, units = "in")
+```
+
+```{r snodgrass-cerv-res, fig.cap="Residuals for Snodgrass method, cervical region, plotted against known age-at-death."}
+data.frame(
+  "known_age" = na.omit(sep_regions$snodgrass$cervical)$known_age,
+  "residuals" = snodgrass_wls$cervical$residuals) %>%
+ggplot(aes(x = known_age, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  theme_minimal()
+```
+
+```{r snodgrass-thor-res, fig.cap="Residuals for Snodgrass method, thoracic region, plotted against known age-at-death."}
+data.frame(
+  "known_age" = na.omit(sep_regions$snodgrass$thoracic)$known_age,
+  "residuals" = snodgrass_wls$thoracic$residuals) %>%
+ggplot(aes(x = known_age, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  theme_minimal()
+```
+
+```{r snodgrass-lumb-res, fig.cap="Residuals for Snodgrass method, lumbar region, plotted against known age-at-death."}
+data.frame(
+  "known_age" = na.omit(sep_regions$snodgrass$lumbar)$known_age,
+  "residuals" = snodgrass_wls$lumbar$residuals) %>%
+ggplot(aes(x = known_age, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  theme_minimal()
+```
+
+```{r watanabe-all-res, , fig.cap="Residuals for Watanabe method, combined regions, plotted against known age-at-death."}
+data.frame(
+  "known_age" = sep_regions$watanabe$all$known_age,
+  "residuals" = watanabe_wls$all$residuals,
+  "sex" = sep_regions$watanabe$all$sex) %>%
+ggplot(aes(x = known_age, y = residuals, col = sex)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  theme_bw() +
+  labs(y = "Residuals", x = "Age-at-Death") +
+  scale_colour_viridis_d(name = "Sex")
+```
+
+```{r include=FALSE}
+ggsave(here("fig_output", "watanabe_age-bias.jpg"), 
+      dpi = 600, width = 7, height = 6, units = "in")
+```
+
+```{r praneat-all-res, fig.cap="Residuals for Praneatpolgrang method, combined regions, plotted against known age-at-death."}
+data.frame(
+  "known_age" = sep_regions$praneatpolgrang$all$known_age,
+  "residuals" = praneatpolgrang_wls$all$residuals,
+  "sex" = sep_regions$praneatpolgrang$all$sex) %>%
+ggplot(aes(x = known_age, y = residuals, col = sex)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  theme_bw() +
+  labs(y = "Residuals", x = "Age-at-Death") +
+  scale_colour_viridis_d(name = "Sex")
+```
+
+```{r include=FALSE}
+ggsave(here("fig_output", "praneat_age-bias.jpg"), 
+       dpi = 600, width = 7, height = 6, units = "in")
+```
+
+What is the accuracy and average residuals (not squared or absolute) per age
+category?
+
+```{r}
+snodgrass_all_bias <- snodgrass_all_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            bias_snodgrass = mean(residual))
+
+watanabe_all_bias <- watanabe_all_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            bias_watanabe = mean(residual))
+
+praneatpolgrang_all_bias <- praneatpolgrang_all_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            bias_praneat = mean(residual))
+
+all_bias <- list(snodgrass_all_bias, watanabe_all_bias, praneatpolgrang_all_bias)
+
+all_mean_bias <- all_bias %>%
+  reduce(inner_join, by = c("age_group", "n"))
+
+knitr::kable(all_mean_bias, caption = "Prediction bias by age for combined regions")
+```
+
+
+```{r}
+snodgrass_cerv_bias <- snodgrass_cerv_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            snodgrass_bias = mean(residual))
+
+watanabe_cerv_bias <- watanabe_cerv_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            watanabe_bias = mean(residual))
+
+praneatpolgrang_cerv_bias <- praneatpolgrang_cerv_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            praneat_bias = mean(residual))
+
+cerv_bias <- list(snodgrass_cerv_bias, watanabe_cerv_bias, praneatpolgrang_cerv_bias)
+
+cerv_mean_bias <- cerv_bias %>%
+  reduce(inner_join, by = c("age_group", "n"))
+
+knitr::kable(cerv_mean_bias, caption = "Prediction bias by age for cervical region")
+```
+
+```{r}
+snodgrass_thor_bias <- snodgrass_thor_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            snodgrass_bias = mean(residual))
+
+watanabe_thor_bias <- watanabe_thor_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            watanabe_bias = mean(residual))
+
+praneatpolgrang_thor_bias <- praneatpolgrang_thor_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            praneat_bias = mean(residual))
+
+thor_bias <- list(snodgrass_thor_bias, watanabe_thor_bias, praneatpolgrang_thor_bias)
+
+thor_mean_bias <- thor_bias %>%
+  reduce(inner_join, by = c("age_group", "n"))
+
+knitr::kable(thor_mean_bias, caption = "Prediction bias by age for thoracic region")
+```
+
+```{r}
+snodgrass_lumb_bias <- snodgrass_lumb_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            snodgrass_bias = mean(residual))
+
+watanabe_lumb_bias <- watanabe_lumb_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            watanabe_bias = mean(residual))
+
+praneatpolgrang_lumb_bias <- praneatpolgrang_lumb_res %>%
+  group_by(age_group) %>%
+  summarise(n = n(),
+            praneat_bias = mean(residual))
+
+lumb_bias <- list(snodgrass_lumb_bias, watanabe_lumb_bias, praneatpolgrang_lumb_bias)
+
+lumb_mean_bias <- lumb_bias %>%
+  reduce(inner_join, by = c("age_group", "n"))
+
+knitr::kable(lumb_mean_bias, caption = "Prediction bias by age for lumbar region")
+```
+
+
+

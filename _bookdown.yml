@@ -1,0 +1,5 @@
+# solution for supplementary figure numbering (https://community.rstudio.com/t/how-to-change-the-figure-table-caption-style-in-bookdown/110397)
+language:
+      label:
+        fig: !expr function(x) sprintf("Figure S%s ", x)
+        tab: !expr function(x) sprintf("Table S%s ", x)
