@@ -12,7 +12,7 @@ library(equatiomatic)
 # Accuracy calculator function --------------------------------------------
 
 acc_calc <- function(object, interval = "pred", level = 0.68){
-  if(class(object) == "earth") interval = "pint"
+  #if(class(object) == "earth") interval = "pint"
   pred <- do.call("predict", list(object, "interval" = interval, "level" = level))
   #pred <- predict.lm(object, interval, level)
   known <- model.frame(object)[,1] 
@@ -231,8 +231,7 @@ n_all_snodgrass <- n_elements_all %>%
   filter(method == "snodgrass") %>%
   mutate(residual = snodgrass_all_res$residual,
          age = snodgrass_all_res$known_age,
-         sex = snodgrass_all_res$sex) # WHY ARE THERE ONLY 86 INDIVIDUALS???
-    # IMPORTANT! Some feat numbers are duplicated. Must group by feat and find.
+         sex = snodgrass_all_res$sex)
 
 n_all_snodgrass %>%
   ggplot(aes(x = n, y = abs(residual))) +
