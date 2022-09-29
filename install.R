@@ -1,0 +1,6 @@
+install.packages("here")
+install.packages("tidyverse")
+install.packages("broom")
+install.packages("ggfortify")
+install.packages("equatiomatic")
+install.packages("corrplot")
