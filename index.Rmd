@@ -1,10 +1,10 @@
 ---
 title: "Supplementary Material for Sluis et al. 2022"
 output:
+  bookdown::pdf_document2:
+    toc: true
   bookdown::html_document2:
     toc: true
-  bookdown::pdf_document2: default
-  bookdown::word_document2: default
 ---
 
 ```{r setup, include=FALSE}
@@ -187,19 +187,19 @@ ggsave(here("fig_output", "wls_plots.jpg"),
 
 ## Snodgrass
 
-```{r results='asis'}
+```{r snodgrass-equations, results='asis'}
 lapply(snodgrass_wls, extract_eq, use_coefs = T)
 ```
 
 ## Watanabe et al.
 
-```{r results='asis'}
+```{r watanabe-equations, results='asis'}
 lapply(watanabe_wls, extract_eq, use_coefs = T)
 ```
 
 ## Praneatpolgrang et al.
 
-```{r results='asis'}
+```{r praneatpolgrang-equations, results='asis'}
 lapply(praneatpolgrang_wls, extract_eq, use_coefs = T)
 ```
 
@@ -213,21 +213,21 @@ Accuracy is calculated as the total number of prediction intervals that contain
 the known age, and total number of estimates that are within 5, 10, and 15 years
 of the known age.
 
-```{r}
+```{r model-eval-comb}
 all_eval_tbl %>%
   relocate(method, .before = 1) %>%
   knitr::kable(caption = "Evaluation of combined regions models.")
 ```
 
-```{r}
+```{r model-eval-cerv}
 knitr::kable(cerv_eval_tbl, caption = "Evaluation of cervical region models.")
 ```
 
-```{r}
+```{r model-eval-thor}
 knitr::kable(thor_eval_tbl, caption = "Evaluation of thoracic region models.")
 ```
 
-```{r}
+```{r model-eval-lumb}
 knitr::kable(lumb_eval_tbl, caption = "Evaluation of lumbar region models.")
 ```
 
